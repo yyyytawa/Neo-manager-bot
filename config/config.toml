@@ -1,0 +1,39 @@
+[ErisPulse.framework]
+enable_lazy_loading = true
+
+[ErisPulse.logger]
+level = "INFO"
+log_files = []
+memory_limit = 1000
+
+[ErisPulse.modules]
+
+[ErisPulse.server]
+host = "0.0.0.0"
+port = 8000
+
+[ErisPulse.storage]
+use_global_db = false
+
+[ErisPulse.adapters.status]
+yunhu = true
+
+[ErisPulse.event.command]
+allow_space_prefix = false
+case_sensitive = true
+must_at_bot = false
+prefix = "/"
+
+[ErisPulse.event.message]
+ignore_self = true
+
+[Yunhu_Adapter.bots.default]
+bot_id = "12345"
+enabled = true
+mode = "ws"
+token = "12345678"
+webhook_path = "/webhook"
+
+[ErisPulse.router.security.headers]
+X-Content-Type-Options = "nosniff"
+X-Frame-Options = "DENY"

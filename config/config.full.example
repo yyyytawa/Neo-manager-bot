@@ -1,0 +1,68 @@
+# ErisPulse 完整配置示例
+# 此文件展示所有可用配置项及其默认值
+# 如需使用，将所需配置复制到 config.toml 并按需修改
+
+# ==================== 服务器 ====================
+
+[ErisPulse.server]
+host = "0.0.0.0"              # 监听地址
+port = 8000                   # 监听端口
+ssl_certfile = null           # SSL 证书路径
+ssl_keyfile = null            # SSL 密钥路径
+
+# ==================== 日志 ====================
+
+[ErisPulse.logger]
+level = "INFO"                # 日志级别: DEBUG/INFO/WARNING/ERROR
+log_files = []                # 日志文件列表, 如 ["logs/app.log"]
+memory_limit = 1000           # 内存日志条数上限
+
+# ==================== 存储 ====================
+
+[ErisPulse.storage]
+use_global_db = false         # 是否使用全局数据库
+
+# ==================== 事件系统 ====================
+
+[ErisPulse.event.message]
+ignore_self = true            # 忽略自身消息
+
+[ErisPulse.event.command]
+prefix = "/"                  # 命令前缀
+case_sensitive = true         # 区分大小写
+allow_space_prefix = false    # 允许前缀前有空格
+must_at_bot = false           # 必须艾特Bot才触发
+
+# ==================== 框架 ====================
+
+[ErisPulse.framework]
+enable_lazy_loading = true    # 启用模块懒加载
+
+# ==================== 路由增强 ====================
+
+[ErisPulse.router.cors]
+enabled = false
+allow_origins = ["*"]
+allow_methods = ["*"]
+allow_headers = ["*"]
+allow_credentials = false
+max_age = 600
+
+[ErisPulse.router.security]
+enabled = false
+
+[ErisPulse.router.security.headers]
+X-Content-Type-Options = "nosniff"
+X-Frame-Options = "DENY"
+
+# ==================== 适配器状态 ====================
+
+[ErisPulse.adapters.status]
+# yunhu = false
+# telegram = false
+# onebot11 = false
+
+# ==================== 模块状态 ====================
+
+[ErisPulse.modules.status]
+# MyModule = true
