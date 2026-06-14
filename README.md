@@ -115,4 +115,6 @@ uv run epsdk run main.py
 
 ### warns
 
-查看
+查看警告历史.  
+
+/warns \[用户 ID\]  
