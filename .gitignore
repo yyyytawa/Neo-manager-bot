@@ -2,3 +2,7 @@
 logs
 
 uv.lock
+
+# 测试
+tests
+config/config.db

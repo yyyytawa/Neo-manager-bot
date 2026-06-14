@@ -5,23 +5,31 @@ my_erispulse_project 主程序
 """
 
 import asyncio
+from datetime import datetime
+import json
 from ErisPulse import sdk
 from ErisPulse.Core.Event import command
 from ErisPulse.Core import adapter
+
+class settings:
+    max_warns = 20 # 最大警告次数
 
 async def get_msg(event, msg_id: str):
     """使用 msg_id 获取消息"""
     token = sdk.config.getConfig("Yunhu_Adapter.bots")['default']["token"]
     rsp = await sdk.client.get(f"https://chat-go.jwzhd.com/open-apis/v1/bot/messages?token={ token }&chat-id={ event.get_group_id() }&chat-type=group&message-id={ msg_id }&before=1")
-    return (await rsp.json()).get("data", {}).get("list")
+    msg_tmp = (await rsp.json()).get("data", {}).get("list")
+    if not msg_tmp:
+        return
+    msg = msg_tmp[0]
+    if msg.get("msgId") != msg_id:
+        return
+    return msg
 
 async def get_parent_msg_sender(event, msg_id: str):
-    data = await get_msg(event, msg_id)
-    if not data:
-        return None
-    msg = data[0]
-    if msg.get("msgId") != msg_id:
-        return None
+    msg = await get_msg(event, msg_id)
+    if not msg:
+        return
     return msg["senderId"]
 
 
@@ -162,10 +170,14 @@ async def admadd_handler(event):
     if not args:
         await event.reply("缺少参数!用法: /adminadd <用户ID>", reply_to = event["message_id"])
         return
+    args = [ uid for uid in args if len(uid) <= 20]
     group_id = event.get_group_id()
     data = sdk.storage.get(f"{group_id}", {})
     admin_list = data.get("admin", [])
     admin_list = list(set(admin_list + args))
+    if len(admin_list) > 100:
+        await event.reply("长度超限!请先删除一部分管理员.", reply_to = event["message_id"])
+        return
     data["admin"] = admin_list
     sdk.storage.set(f"{group_id}", data)
     await event.reply("添加成功!", reply_to = event["message_id"])
@@ -206,14 +218,89 @@ async def del_handler(event):
     if not is_admin(event):
         await event.reply("无权限!", reply_to = event["message_id"])
         return
+
     yunhu = adapter.get("yunhu")
     group_id = event.get_group_id()
     parent_id = event.get_raw()["event"]["message"].get("parentId")
+    if not parent_id:
+        await event.reply("请引用要撤回的消息!", reply_to = event["message_id"])
+        return
+
     result = await yunhu.Send.To("group", group_id).Recall(parent_id)
     if result.get("status") == "ok":
         await event.reply("撤回成功!", reply_to = event["message_id"])
     else:
         await event.reply(f"失败,msg: { result.get("message") }", reply_to = event["message_id"])
+
+@command("warn", help = "警告用户")
+async def warn_handler(event):
+    """警告用户"""
+    if not is_admin(event):
+        await event.reply("无权限!", reply_to = event["message_id"])
+        return
+    parent_id = event.get_raw()["event"]["message"].get("parentId")
+    if not parent_id:
+        await event.reply("参数错误!,用法: /warn <引用消息> [原因]", reply_to = event["message_id"])
+        return
+    group_id = event.get_group_id()
+    parts = event.get_command_raw().split(maxsplit=1)
+    reason = parts[1] if len(parts) > 1 else ""
+    if len(reason) > 100:
+        await event.reply("原因最多 100 字!", reply_to = event["message_id"])
+        return
+    
+    reason = reason if reason else "未填写"
+    msg_raw = await get_msg(event, msg_id= parent_id)
+    payload = {
+        "time": event.get_time(),
+        "operator": event.get_user_id(),
+        "reason": reason,
+        "msg_raw": msg_raw
+    }
+    parent_msg_sender = await get_parent_msg_sender(event, msg_id = parent_id)
+    data = sdk.storage.get(f"warns:{group_id}:{parent_msg_sender}", [])
+    data.insert(0, payload)
+    if len(data) > settings.max_warns:
+        data = data[:settings.max_warns]
+    sdk.storage.set(f"warns:{group_id}:{parent_msg_sender}", data)
+    await event.reply(f"成功警告用户 {parent_msg_sender}.\n原因: {reason}.\n当前用户的警告次数为 {len(data)}.")
+
+@command("warndel", help = "撤销最近一次的警告")
+async def warndel_handler(event):
+    """撤销最近的一次警告"""
+    if not is_admin(event):
+        await event.reply("无权限!", reply_to = event["messa ge_id"])
+        return
+    parts = event.get_command_raw().split(maxsplit=1)
+    user_id = parts[1] if len(parts) > 1 else ""
+    if not user_id:
+        await event.reply("参数错误!用法: /warndel <用户 ID>", reply_to = event["message_id"])
+        return
+    elif len(user_id) > 20:
+        await event.reply("用户 ID 过长!", reply_to = event["message_id"])
+        return
+
+    warns = sdk.storage.get(f"warns:{event.get_group_id()}:{user_id}", [])
+    warns = warns[1:]
+    sdk.storage.set(f"warns:{event.get_group_id()}:{user_id}", warns)
+    await event.reply(f"成功撤销用户 {user_id} 最近的一次警告!")
+
+@command("warns", help = "查看警告记录")
+async def warns_handler(event):
+    parts = event.get_command_raw().split(maxsplit=1)
+    user_id = parts[1] if len(parts) > 1 else ""
+    if not user_id:
+        user_id = event.get_user_id()
+
+    group_id = event.get_group_id()
+    warns = sdk.storage.get(f"warns:{group_id}:{user_id}", [])
+    content = f"<details>{user_id} 在群 {group_id} 被警告信息\n"
+    for warn in warns:
+        warn_time = datetime.fromtimestamp(warn["time"]).strftime("%Y-%m-%d %H:%M:%S")
+        warn_msg_raw = json.dumps(warn["msg_raw"], indent= 2)
+        content += f"警告时间: {warn_time}\n原因: {to_html_entities(warn["reason"])}\n操作者: {warn["operator"]}\n被警告的信息元数据:\n{to_html_entities(warn_msg_raw)}\n"
+    content += f"总计: {len(warns)} 条.</details>"
+    await event.reply(content, method = "Markdown", reply_to = event["message_id"])
 
 async def main():
     await sdk.run(keep_running=True)
