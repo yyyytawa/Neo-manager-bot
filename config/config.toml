@@ -1,7 +1,16 @@
 [ErisPulse.framework]
 enable_lazy_loading = true
+handler_max_concurrency = 64
+offline_bot_expiry = 3600
+proactive_gc_interval = 300
+strict_mode = 0
+uninit_timeout = 30
+
+[ErisPulse.i18n]
+language = "auto"
 
 [ErisPulse.logger]
+format = "rich"
 level = "INFO"
 log_files = []
 memory_limit = 1000
@@ -27,11 +36,17 @@ prefix = "/"
 [ErisPulse.event.message]
 ignore_self = true
 
-[Yunhu_Adapter.bots.default]
-bot_id = "123456789"
+[ErisPulse.framework.strict_mode_exceptions]
+adapters = []
+modules = []
+
+[ErisPulse.master.users]
+
+[Yunhu_Adapter.accounts.default]
+bot_id = ""
 enabled = true
 mode = "ws"
-token = "abcdefg"
+token = "asdasdadwasdawdasdawdasdawdaffasfs"
 webhook_path = "/webhook"
 
 [ErisPulse.router.security.headers]
