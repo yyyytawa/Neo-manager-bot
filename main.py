@@ -565,9 +565,9 @@ async def setjointext_handler(event: Event):
 #     content_type = data["type"]
 #     await event.reply(f"{ content }", method = content_type)
 
-@command("cache-debug")
-async def print_mem_cache(event):
-    await event.reply(f"{ mem_cache.cache}")
+# @command("cache-debug")
+# async def print_mem_cache(event):
+#     await event.reply(f"{ mem_cache.cache}")
 
 async def main():
     asyncio.create_task(sync_blacklist())
