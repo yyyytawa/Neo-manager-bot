@@ -15,6 +15,7 @@ from ErisPulse.Core import adapter
 import copy
 import time
 import threading
+import re
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -433,11 +434,9 @@ async def mute_blacklist_user(event: Event):
         f"原因: { reason }\n"
         "如有疑问自行申诉,此看板 10 分钟后过期,如已移出黑名单则可能是未及时更新导致,请添加机器人为好友使用 /refresh-unblacklist 手动刷新黑名单."
     )
-    result = await yunhu.Send.To("group", group_id).Board("local", 
+    result = await yunhu.Send.To("group", group_id).Expire(600).ForMember(sender_id).Board("local", 
                                                           content = content,
-                                                          content_type = "text",
-                                                          expire_time = event.get_time() + 600,
-                                                          member_id = sender_id)
+                                                          content_type = "text")
     if result.get("status") != "ok":
         sdk.logger.error(f"设置群聊 { group_id } 的看板失败, msg: {result.get("message")}")
 
@@ -507,7 +506,7 @@ async def setjointext_handler(event: Event):
     conv = event.conversation(timeout=60)
 
     # 询问用户消息类型
-    content_type = await conv.choose("请选择消息类型:", ["文本", "Markdown", "HTML"])
+    content_type = await conv.choose("请选择消息类型:", ["文本", "Markdown", "HTML", "A2UI"])
 
     if content_type is None:
         await conv.say("超时,已取消!", reply_to = event["message_id"])
@@ -517,12 +516,13 @@ async def setjointext_handler(event: Event):
     content_type_mapping = {
         0: "text",
         1: "markdown",
-        2: "html"
+        2: "html",
+        3: "a2ui"
     }
     content_type = content_type_mapping.get(content_type)
 
     # 询问消息内容
-    await conv.say('请发送消息内容(发送"清空"/"clean"以关闭此功能,keep 不更改):')
+    await conv.say('请发送消息内容(发送"清空"/"clean"以关闭此功能,keep 不更改)\n可用变量: $avatar $uid $name')
     content = await conv.wait()
 
     if content:
@@ -553,17 +553,118 @@ async def setjointext_handler(event: Event):
     mem_cache.set(f"{group_id}:join_in", data)
     await event.reply("设置进群欢迎成功!")
 
-# @notice.on_group_increase()
-# async def member_increase_handler(event: Event):
-#     user_id = event.get_user_id()
-#     group_id = event.get_group_id()
-#     data = mem_cache.get(f"{group_id}:join_in", {})
-#     sdk.logger.info(data)
-#     content = data.get("content")
-#     if content is None:
-#         return
-#     content_type = data["type"]
-#     await event.reply(f"{ content }", method = content_type)
+@command("q-out", help= "设置退群消息")
+async def setquittext_handler(event: Event):
+    if not is_real_admin(event):
+        await event.reply("无权限!", reply_to = event["message_id"])
+        return
+    
+    group_id = event.get_group_id()
+    conv = event.conversation(timeout=60)
+
+    # 询问用户消息类型
+    content_type = await conv.choose("请选择消息类型:", ["文本", "Markdown", "HTML", "A2UI"])
+
+    if content_type is None:
+        await conv.say("超时,已取消!", reply_to = event["message_id"])
+        conv.stop()
+        return
+
+    content_type_mapping = {
+        0: "text",
+        1: "markdown",
+        2: "html",
+        3: "a2ui"
+    }
+    content_type = content_type_mapping.get(content_type)
+
+    # 询问消息内容
+    await conv.say('请发送消息内容(发送"清空"/"clean"以关闭此功能,keep 不更改)\n可用变量: $avatar $uid $name')
+    content = await conv.wait()
+
+    if content:
+        content = content.get_text()
+    else:
+        await conv.say("请求超时!", reply_to = event["message_id"])
+        conv.stop()
+        return
+    
+    if content in ["清空", "clean"]:
+        mem_cache.delete(f"{group_id}:quit_out")
+        await event.reply("取消退群欢迎成功!", reply_to = event["message_id"])
+        return
+
+    if mem_cache.get(f"{group_id}:quit_out.content") and content == "keep":
+        mem_cache.set(f"{group_id}:quit_out.type", content_type)
+        await event.reply("更改消息类型成功!", reply_to = event["message_id"])
+        return
+    elif content == "keep":
+        await event.reply("无退群消息!", reply_to = event["message_id"])
+        return
+
+    data = {
+        "content": content,
+        "type": content_type
+    }
+
+    mem_cache.set(f"{group_id}:quit_out", data)
+    await event.reply("设置退群消息成功!")
+
+async def join_and_quit_msg_handler(event: Event):
+    avatar = event.get("yunhu_raw", {}).get("event").get("avatarUrl")
+    name = event.get("yunhu_raw", {}).get("event").get("nickname")
+    user_id = event.get_user_id()
+    group_id = event.get_group_id()
+    if event.get_detail_type() == "group_member_increase":
+        data = mem_cache.get(f"{group_id}:join_in", {})
+    else:
+        data = mem_cache.get(f"{group_id}:quit_out", {})
+    sdk.logger.info(data)
+    content = data.get("content")
+    if content is None:
+        return
+    content = (content
+               .replace("$avatar", avatar)
+               .replace("$name", name)
+               .replace("$uid", user_id))
+    content_type = data["type"]
+    if content_type == "text":
+        await yunhu.Send.To("group", group_id).Text(f"{ content }").At(user_id)
+    elif content_type == "markdown":
+        await yunhu.Send.To("group", group_id).Markdown(f"{ content }").At(user_id)
+    elif content_type == "html":
+        await yunhu.Send.To("group", group_id).Html(f"{ content }").At(user_id)
+    elif content_type == "a2ui":
+        await yunhu.Send.To("group", group_id).A2UI(f"{ content }").At(user_id)
+    else:
+        sdk.logger.error(f"未知类型 { content_type }")
+
+notice.on_group_increase()(join_and_quit_msg_handler)
+notice.on_group_decrease()(join_and_quit_msg_handler)
+
+@command("view-jqmsg", help = "查看进退群消息指令", aliases=["查看进群退群消息"])
+async def view_join_and_quit_msg_handler(event: Event):
+    group_id = event.get_group_id()
+    join_msg_all = mem_cache.get(f"{group_id}:join_in", {})
+    join_msg_content = join_msg_all.get("content", "无").replace("`", "")
+    join_msg_type = join_msg_all.get("type", "text")
+
+    quit_msg_all = mem_cache.get(f"{group_id}:quit_out", {})
+    quit_msg_content = quit_msg_all.get("content", "无").replace("`", "")
+    quit_msg_type = quit_msg_all.get("type", "text")
+
+    content = (
+        f"群 { group_id } 的进群消息和退群消息:\n"
+        f"进群消息:\n"
+        f"```{ join_msg_type }\n"
+        f"{ join_msg_content }\n"
+        f"```\n"
+        f"退群消息:\n"
+        f"```{ quit_msg_type }\n"
+        f"{ quit_msg_content}\n"
+        f"```"
+    )
+    await event.reply(content, method = "markdown", reply_to = event["message_id"])
 
 # @command("cache-debug")
 # async def print_mem_cache(event):
