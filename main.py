@@ -15,7 +15,6 @@ from ErisPulse.Core import adapter
 import copy
 import time
 import threading
-import re
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -24,8 +23,40 @@ if TYPE_CHECKING:
 class settings:
     max_warns = 20 # 最大警告次数
 
-class blacklist:
+class BlacklistLevel:
+    """
+    黑名单暂行管理规定:
+
+    I 类: 强制开启不可关闭
+
+    II 类: 默认开启可选关闭
+
+    III 类: 默认关闭可选开启
+
+    特殊: 临时风控类
+    """
+
+    I = True
+    II = True
+    III = False
+
+
+class blacklist: # 联防黑名单
     data = None # 初始为空
+    level = BlacklistLevel.I
+
+class HallOfShame: 
+    """
+    封神榜默认数据
+    专门存储反智奇葩人物
+    当然这个只是存默认设置
+    """
+    name = "[封神榜]"
+    level = BlacklistLevel.II
+    key = "HallOfShameBlacklist" # 数据库中键名
+    can_view_group = [
+        "big"
+    ]
 
 @sdk.lifecycle.on("core.init.complete")
 async def get_yunhu_adapter(event):
@@ -80,6 +111,13 @@ class mem_cache_cls:
                 self.usage.pop(name)
 
             sdk.storage.delete(name)
+
+    def clean(self,name: str) -> None:
+        '''清除缓存'''
+        with self.lock:
+            if name in self.cache:
+                self.cache.pop(name)
+                self.usage.pop(name)
 
     def cleanup_expired(self) -> None:
         """清理过期数据"""
@@ -344,7 +382,7 @@ async def warn_handler(event):
     if len(reason) > 100:
         await event.reply("原因最多 100 字!", reply_to = event["message_id"])
         return
-    
+
     reason = reason if reason else "未填写"
     msg_raw = await get_msg(event, msg_id= parent_id)
     payload = {
@@ -412,10 +450,18 @@ async def mute_blacklist_user(event: Event):
     msg_id = event["message_id"]
     need_recall = False
     if sender_id in blacklist.data:
-        sdk.logger.info(f"发现黑名单用户 {sender_id},准备撤回.")
+        sdk.logger.info(f"发现联防黑名单用户 {sender_id},准备撤回.")
         reason = f"[联防黑名单]-{ blacklist.data[sender_id].get("reason")}"
         need_recall = True
-    
+
+    hallOfShameSettings = mem_cache.get(f"{ group_id }.hall_of_shame_enabled", HallOfShame.level)
+    hallOfShameData = mem_cache.get(HallOfShame.key, {})
+
+    if hallOfShameSettings is True and sender_id in hallOfShameData:
+        sdk.logger.info(f"发现封神榜黑名单用户 {sender_id},准备撤回.")
+        reason = f"{ HallOfShame.name }"
+        need_recall = True
+
     if not need_recall:
         return
 
@@ -432,13 +478,90 @@ async def mute_blacklist_user(event: Event):
         "黑名单通知\n"
         f"msg_id: { msg_id }\n"
         f"原因: { reason }\n"
-        "如有疑问自行申诉,此看板 10 分钟后过期,如已移出黑名单则可能是未及时更新导致,请添加机器人为好友使用 /refresh-unblacklist 手动刷新黑名单."
+        "如有疑问自行申诉,此看板 10 分钟后过期,如已移出联防黑名单但是还仍因联防黑名单拦截则可能是未及时更新导致,请添加机器人为好友使用 /refresh-unblacklist 手动刷新联防黑名单."
     )
     result = await yunhu.Send.To("group", group_id).Expire(600).ForMember(sender_id).Board("local", 
                                                           content = content,
                                                           content_type = "text")
     if result.get("status") != "ok":
         sdk.logger.error(f"设置群聊 { group_id } 的看板失败, msg: {result.get("message")}")
+
+async def hall_of_shame_settings_handler(event: Event):
+    if not is_real_admin(event):
+        await event.reply("无权限!", reply_to = event["message_id"])
+        return
+    
+    group_id = event.get_group_id()
+    if event.get_command_name() in ["h-on", "开启封神榜黑名单"]:
+        mem_cache.set(f"{ group_id }.hall_of_shame_enabled", True)
+    else:
+        mem_cache.set(f"{ group_id }.hall_of_shame_enabled", False)
+
+    await event.reply(f"设置成功,当前状态 { mem_cache.get(f"{ group_id }.hall_of_shame_enabled") }")
+
+command("h-on", help="开启封神榜黑名单",aliases=["开启封神榜黑名单"])(hall_of_shame_settings_handler)
+command("h-off", help="关闭封神榜黑名单",aliases=["关闭封神榜黑名单"])(hall_of_shame_settings_handler)
+
+@command("h-view", help = "查看封神榜黑名单", aliases=["查看封神榜黑名单"])
+async def hall_of_shame_view_handler(event: Event):
+    group_id = event.get_group_id()
+    user_id = event.get_user_id()
+    if group_id not in HallOfShame.can_view_group:
+        return
+
+    board_content = "黑名单列表:\n"
+    if mem_cache.get(HallOfShame.key, {}):
+        for black_user_id, black_info in mem_cache.get(HallOfShame.key, {}).items():
+            board_content += f"""
+- {black_user_id}
+  原因: { black_info["reason"] }
+  操作时间: { black_info["time"] }
+  操作人员: { black_info["operator"] }
+"""
+    await yunhu.Send.To("group", group_id).ForMember(user_id).Expire(600).Board(board_content, content_type = "markdown")
+    await event.reply("请看看板", reply_to = event["message_id"])
+
+async def hall_of_shame_list_handler(event: Event):
+    group_id = event.get_group_id()
+    if group_id not in HallOfShame.can_view_group:
+        return
+    
+    if not is_admin(event):
+        await event.reply("无权限!", reply_to = event["message_id"])
+        return
+
+    user_id = event.get_user_id()
+
+    parts = event.get_command_raw().split(maxsplit = 2)
+
+    if len(parts) < 3:
+        await event.reply("参数错误./<命令> <用户 ID> <原因>",reply_to = event["message_id"])
+        return
+
+    ban_user_id = str(parts[1])
+    reason = str(parts[2])
+
+    cmd = event.get_command_name()
+
+    if cmd in ["h-add", "添加封神榜黑名单"]:
+        payload = {
+            "reason": reason,
+            "time": datetime.fromtimestamp(event.get_time()).strftime("%Y-%m-%d %H:%M:%S"),
+            "operator": user_id
+        }
+        mem_cache.set(f"{ HallOfShame.key }.{ ban_user_id }", payload)
+        mem_cache.clean(HallOfShame.key)
+        await event.reply("添加成功!", reply_to = event["message_id"])
+        return
+    else:
+        mem_cache.delete(f"{ HallOfShame.key }.{ ban_user_id }")
+        mem_cache.clean(HallOfShame.key)
+        await event.reply("删除成功!", reply_to = event["message_id"])
+        return
+
+
+command("h-add", help = "添加封神榜黑名单", aliases=["添加封神榜黑名单"])(hall_of_shame_list_handler)
+command("h-del", help = "删除封神榜黑名单", aliases=["删除封神榜黑名单"])(hall_of_shame_list_handler)
 
 @command("refresh-unblacklist", help= "刷新联防黑名单列表")
 async def refresh_unblacklist(event: Event):

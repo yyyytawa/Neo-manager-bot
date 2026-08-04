@@ -5,6 +5,6 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "erispulse>=2.6.3",
+    "erispulse>=2.7.0",
     "erispulse-yunhuadapter>=4.2.0",
 ]
